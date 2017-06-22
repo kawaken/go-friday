@@ -121,4 +121,4 @@ func Now() Time {
 * [アセンブラ入門](http://www5c.biglobe.ne.jp/~ecb/assembler/assembler00.html)
 [VDSO(arm)の実装をちょっと調べてみました - Qiita](http://qiita.com/akachochin/items/d5d1ba84fefae2f781f3)
 * [Man page of VDSO](https://linuxjm.osdn.jp/html/LDP_man-pages/man7/vdso.7.html)
-
+* [Go TimeとLinuxカーネルの関係 - ワザノバ | wazanova](http://wazanova.jp/items/1147)
