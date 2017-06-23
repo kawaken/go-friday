@@ -4,16 +4,11 @@
 
 ## type Time
 
-```go
-type Time struct {
-	sec int64
-	nsec int32
-	loc *Location
-}
-```
+**時刻を表す構造体**
+
+### コメント
 
 * `Time` は `nanosecond` の精度を持っている
-	* 環境による
 * ポインタではなく値として保持するべき
 * 複数のgoroutineから同時に利用できる
 * `Before`, `After`, `Equal` で比較できる
@@ -23,11 +18,68 @@ type Time struct {
 * `IsZero` でゼロ値かどうかチェックできる
 * `Location` と紐付いていて `Format`, `Hour`, `Year` などの表示計算に参照される
 * `Local`, `UTC`, `In` は特定の場所の `Time` を返す
-* 場所の変更は表示を変更するだけで、インスタンスの変更はしない
+	* この方法での場所の変更は表示を変更するだけで、インスタンスの変更はしない
 * `==` での比較は、時刻と場所を対象とする
 * 同一の `Location` が設定されていることを保証できないなら、mapやdatabaseのキーとして利用すべきではない
 
+### コード
+
+```go
+type Time struct {
+	// sec gives the number of seconds elapsed since
+	// January 1, year 1 00:00:00 UTC.
+	sec int64
+
+	// nsec specifies a non-negative nanosecond
+	// offset within the second named by Seconds.
+	// It must be in the range [0, 999999999].
+	nsec int32
+
+	// loc specifies the Location that should be used to
+	// determine the minute, hour, month, day, and year
+	// that correspond to this Time.
+	// The nil location means UTC.
+	// All UTC times are represented with loc==nil, never loc==&utcLoc.
+	loc *Location
+}
+```
+
+* `sec` は `0001-01-01 00:00:00 UTC` からの経過秒数
+* `nsec` は正数のナノ秒を保持
+	* `[0, 999999999]` の範囲
+* `loc` は 時刻を明確にするための `Location`
+	* `nil` は `UTC` を表す
+	* `UTC` を表すために `&utcLoc` を使用しないこと
+
+## func Now
+
+```go
+// Now returns the current local time.
+func Now() Time {
+	sec, nsec := now()
+	return Time{sec + unixToInternal, nsec, Local}
+}
+```
+
+* `Now` は `now` を呼び出している
+* `Now` は以下のように初期化された `Time` を返す
+	* sec:  `sec + unixToInternal`
+	* nsec: `nsec`
+	* loc:  `Local`
+
+## const unixToInternal
+
+**Unix時間とUTCの換算のための定数値**
+
+```go
+unixToInternal int64 = (1969*365 + 1969/4 - 1969/100 + 1969/400) * secondsPerDay
+```
+
+* 0000年1月1日00:00:00から1971年1月1日00:00:00までの経過時間
+
 ## const secondsPerDay
+
+**単位換算のための定数値**
 
 ```go
 const (
@@ -41,15 +93,15 @@ const (
 )
 ```
 
-## const unixToInternal
+## func now
 
 ```go
-unixToInternal int64 = (1969*365 + 1969/4 - 1969/100 + 1969/400) * secondsPerDay
+// Provided by package runtime.
+func now() (sec int64, nsec int32)
 ```
 
-* 0000年1月1日00:00:00から1971年1月1日00:00:00までの経過時間
-
-## func now
+* `now` は `runtime` パッケージで定義（実装）されている
+* `now` は `sec`, `nsec` を返す
 
 `now` は `runtime/sys_GOOS_GOARCH.s` の中に実装されている。
 
@@ -86,31 +138,65 @@ fallback:
 	RET
 ```
 
-1. `clock_gettime` が使用できれば呼び出して、 `sec`, `nsec` を取得して返す
-2. `clock_gettime` が使用できなければ、 `gettimeofday` を呼び出して `sec`, `usec` を取得
+1. `runtime·__vdso_clock_gettime_sym` が使用できれば呼び出して、 `sec`, `nsec` を取得して返す
+2. `runtime·__vdso_clock_gettime_sym` が使用できなければ、 `runtime·__vdso_gettimeofday_sym` を呼び出して `sec`, `usec` を取得
 3. `usec` を1000倍して `nsec` として返す
 
-## func Now
+## func runtime.\_\_vdso\_\*\_sym
+
+**vDSOを利用するためのシンボル**
 
 ```go
-// Provided by package runtime.
-func now() (sec int64, nsec int32)
+// initialize with vsyscall fallbacks
+var (
+	__vdso_time_sym          uintptr = 0xffffffffff600400
+	__vdso_gettimeofday_sym  uintptr = 0xffffffffff600000
+	__vdso_clock_gettime_sym uintptr = 0
+)
 
-// Now returns the current local time.
-func Now() Time {
-	sec, nsec := now()
-	return Time{sec + unixToInternal, nsec, Local}
+func vdso_parse_symbols(info *vdso_info, version int32) {
+	if !info.valid {
+		return
+	}
+
+	for _, k := range sym_keys {
+		for chain := info.bucket[k.sym_hash%uint32(len(info.bucket))]; chain != 0; chain = info.chain[chain] {
+			sym := &info.symtab[chain]
+			typ := _ELF64_ST_TYPE(sym.st_info)
+			bind := _ELF64_ST_BIND(sym.st_info)
+			if typ != _STT_FUNC || bind != _STB_GLOBAL && bind != _STB_WEAK || sym.st_shndx == _SHN_UNDEF {
+				continue
+			}
+			if k.name != gostringnocopy(&info.symstrings[sym.st_name]) {
+				continue
+			}
+
+			// Check symbol version.
+			if info.versym != nil && version != 0 && int32(info.versym[chain]&0x7fff) != version {
+				continue
+			}
+
+			*k.ptr = info.load_offset + uintptr(sym.st_value)
+			break
+		}
+	}
 }
 ```
 
-* `Now` は `now` を呼び出している
-* `now` は `runtime` パッケージで定義（実装）されている
-* `now` は `sec`, `nsec` を返す
-* `Now` は以下のように初期化された `Time` を返す
-	* sec:  `sec + unixToInternal`
-	* nsec: `nsec`
-	* loc:  `Local`
-* `now` で取得できる `sec` は `unixtime` なので `unixToInternal` を加算して `UTC` に変換している
+### vDSO
+
+* virtual dynamic shared object
+* カーネルが自動的にすべてのユーザー空間アプリケーションのアドレス空間にマッピングを行う小さな共有ライブラリ
+* システムコールはオーバーヘッドが大きいのでそれを避けるために使用される
+
+## まとめ
+
+* `Time` は内部では、秒とナノ秒とロケーションを保持している
+*  秒は `unixtime` ではなく `UTC`
+* `time.Now` は `time.now` を使用している
+* `time.now` は `GOOS`, `GOARCH` ごとにアセンブラで実装されている
+* `vDSO` を使用し `clock_gettime`, `gettimeofday` を呼び出している
+* `time.now` は `unixtime` なので `unixToInternal` を加算している
 
 ## 参考
 
@@ -122,3 +208,4 @@ func Now() Time {
 [VDSO(arm)の実装をちょっと調べてみました - Qiita](http://qiita.com/akachochin/items/d5d1ba84fefae2f781f3)
 * [Man page of VDSO](https://linuxjm.osdn.jp/html/LDP_man-pages/man7/vdso.7.html)
 * [Go TimeとLinuxカーネルの関係 - ワザノバ | wazanova](http://wazanova.jp/items/1147)
+* [実行ファイル形式のELFって何？ - ITmedia エンタープライズ](http://www.itmedia.co.jp/help/tips/linux/l0448.html)
