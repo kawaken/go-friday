@@ -1,4 +1,4 @@
-# package: time
+# time #1
 
 今回は時刻の取得の仕方を確認
 
